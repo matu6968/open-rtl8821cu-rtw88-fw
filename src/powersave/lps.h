@@ -37,8 +37,8 @@ void station_lps_poll(void);
  * this is not the stock PS-Poll/DTIM sleep scheduler.
  */
 void station_lps_beacon(uint32_t psr);
-/* Call only after media disconnect or MAC shutdown, never to fake a leave
- * while associated. It performs no MMIO and forgets reserved-page ownership.
+/* Reset the station state after disconnect, MAC shutdown, or an AP role
+ * change after draining any outstanding station TX. It performs no MMIO.
  */
 void station_lps_cancel(void);
 void station_lps_request_active(void);

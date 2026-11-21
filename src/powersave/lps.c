@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "lps.h"
+#include "../ap/ap.h"
 
 /* Port-0 ordinary LPS implements the AP-side power-save handshake.
  * AP_PS denotes an acknowledged PM transition. The deep runtime owns
@@ -252,6 +253,20 @@ void station_lps_poll(void)
     if (!radio_running()) {
         if (g_lps.page_valid || g_lps.ap_ps || owned || g_lps.state != LPS_ACTIVE)
             station_lps_cancel();
+        return;
+    }
+    if ((g_lps.page_valid || g_lps.ap_ps || owned || g_lps.state != LPS_ACTIVE) &&
+        ap_port_active()) {
+        /* Let an already submitted null retire before releasing the shared
+         * queue. AP mode never starts another station PM exchange.
+         */
+        if (owned && submitted) {
+            if (diag_hw_read(CPU_MGQ_INFO) & CPU_MGQ_POLL) return;
+            diag_hw_write(FT1ISR, diag_hw_read(FT1ISR) & NULL_EVENTS);
+        }
+        if (g_lps.ap_ps && (diag_hw_read(TCR) & 0x80u)) (void)tag_pm(0);
+        release_queue();
+        station_lps_cancel();
         return;
     }
     if (g_lps.state == LPS_FAILED && owned && submitted) {

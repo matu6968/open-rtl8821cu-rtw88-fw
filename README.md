@@ -9,7 +9,7 @@ The RTL8811CU has been tested in station mode with open and WPA2 networks.
 The production image passed an RTL8811CU bench test covering probe, scan,
 WPA2 association and reconnect, IP traffic, and firmware logs. RTL8821CU
 board detection is covered by offline tests and awaits testing on hardware.
-AP mode and Bluetooth are unsupported. WEP, WPA, and WPA3 are untested.
+Bluetooth is unsupported. WEP, WPA, and WPA3 are untested.
 
 ## Build
 
@@ -46,6 +46,39 @@ to the distribution firmware. [rtw88 firmware filename](https://github.com/torva
 The optional rtw88 bundle provides kernel log decoding, magic-packet WoWLAN,
 and opt-in USB deep LPS. Its build is pinned to Ubuntu
 `7.0.0-43-generic`. [Build and load the optional host modules](host/rtw88/README.md)
+
+## Access point mode
+
+Use `hostapd` with the `nl80211` driver and one AP interface. Linux
+configures the channel, keys, client state, and beacon template. The
+adapter schedules beacon transmission through its hardware queue. The
+firmware keeps the AP awake and continues to handle rate control and TX
+status for connected clients.
+
+The RTL8811CU bench test used 2.4 GHz WPA2-PSK with CCMP. A separate device
+associated, received a DHCP lease, and loaded a local HTTP page over Wi-Fi.
+
+For a 2.4 GHz WPA2-PSK access point, create a `hostapd.conf` with the
+following settings. Use your adapter's interface name, a unique passphrase,
+and a channel permitted by your local regulatory settings.
+
+```ini
+interface=wlan0
+driver=nl80211
+ssid=rtl8821c-ap
+hw_mode=g
+channel=1
+ieee80211n=1
+wmm_enabled=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=<replace-with-your-passphrase>
+```
+
+Run `sudo hostapd hostapd.conf` after releasing the target interface from
+any other network manager. Configure IP addressing and any routing or
+DHCP service on the host.
 
 ## Firmware logs
 

@@ -22,7 +22,7 @@ SOURCES := diagnostic/entry.S diagnostic/main.c diagnostic/events.c diagnostic/c
  interrupts/core.S interrupts/timing.c interrupts/foundation.c station/station.c \
  station/packet.c station/iqk.c station/tx_report.c broader/broader.c station/rate.c \
  station/power.c powersave/lps.c doze/doze.c doze/beacon.c doze/radio.c wowlan/wowlan.c \
- deep/deep.c deep/clock.c deep/resume.S fwlog/fwlog.c
+ deep/deep.c deep/clock.c deep/resume.S fwlog/fwlog.c ap/ap.c
 OBJECTS := $(addprefix $(BUILD)/,$(addsuffix .o,$(basename $(SOURCES))))
 LINKERS := $(SRC)/deep/linker.ld $(SRC)/diagnostic/linker.ld
 PACKER := $(SRC)/diagnostic/pack.py $(SRC)/diagnostic/format.py tools/pack_rtw.py tools/parse_rtw.py

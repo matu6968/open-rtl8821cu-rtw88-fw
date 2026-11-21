@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "broader.h"
+#include "../ap/ap.h"
 #include "../station/rate.h"
 #include "../station/power.h"
 #include "../powersave/lps.h"
@@ -34,10 +35,13 @@ uint32_t broader_register_h2c(uint32_t lo, uint32_t hi)
      */
     if (!result && station_wowlan_owned()) result = 2;
     if (!result) result = station_rate_h2c(lo,hi);
-    if (result == 1 && (lo & 255u) == 1u && !((lo >> 16) & 255u))
-        station_doze_media(!!(lo & 256u));
-    if (result == 1 && (lo & 255u) == 1u && !(lo & 256u))
-        station_lps_cancel();
+    if (result == 1 && (lo & 255u) == 1u &&
+        !((lo >> 16) & 255u) && !ap_port_active()) {
+        uint32_t connected = !!(lo & 256u);
+        station_doze_media(connected);
+        if (!connected) station_lps_cancel();
+    }
+    if (!result) result = ap_h2c(lo,hi);
     if (!result) result = station_lps_h2c(lo,hi);
     if (!result) result = station_power_h2c(lo,hi);
     if (!result) result = fw_log_h2c(lo,hi);
@@ -52,8 +56,9 @@ uint32_t broader_register_h2c(uint32_t lo, uint32_t hi)
 
 void broader_poll(void)
 {
+    uint32_t ap = ap_poll();
     station_lps_poll();
     if (station_transport_ready()) station_rate_poll();
-    station_doze_poll();
+    if (!ap) station_doze_poll();
     if (!radio_owned()) fw_log_poll();
 }

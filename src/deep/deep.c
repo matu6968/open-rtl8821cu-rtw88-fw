@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "deep.h"
+#include "../ap/ap.h"
 #include "clock.h"
 #include "../doze/radio.h"
 #include "../doze/doze.h"
@@ -84,7 +85,7 @@ uint32_t deep_h2c(uint32_t lo,uint32_t hi)
          */
         if (hi!=DEEP_MAGIC || mode || !cookie || cookie!=g_deep.cookie ||
             g_deep.state!=1u || g_deep.mode<2u || !g_deep.requested ||
-            clock_owned() || station_wowlan_owned() || radio_owned()) {
+            clock_owned() || station_wowlan_owned() || radio_owned() || ap_port_active()) {
             ++g_deep.rejected_commits;return 2;
         }
         tim_at_commit = g_lps.tim_wakes;
@@ -93,7 +94,7 @@ uint32_t deep_h2c(uint32_t lo,uint32_t hi)
         ++g_deep.commits;g_deep.state=4;return 1;
     }
     if (hi!=DEEP_MAGIC || mode>5u || !cookie || clock_owned() ||
-        station_wowlan_owned() || radio_owned() ||
+        station_wowlan_owned() || radio_owned() || (mode && ap_port_active()) ||
         (mode>=2u && mode<=4u && g_station.iqk_completed) ||
         (mode==5u && (!g_station.iqk_completed || !g_doze.connected)) ||
         (mode>=2u && (g_deep.requested || (compat_read8(RPWM)&1u))) ||
@@ -176,6 +177,7 @@ uint32_t deep_pre(void)
     }
     if (g_deep.mode>=2u && g_deep.state==4u && g_deep.requested &&
         !(foundation_read32(FT1ISR)&1u)) {
+        if (ap_port_active()) return 1;
         uint32_t generation=g_deep.accepted;
         if (g_deep.mode==5u) {
             if (!radio_owned() || !radio_asleep() || g_lps.state!=LPS_AP_PS || g_lps.ap_ps!=1u ||
