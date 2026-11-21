@@ -1,0 +1,23 @@
+{
+  "b84c": "read Status into v0",
+  "b86d": "read Cause into v1",
+  "b84e": "read EPC into v0",
+  "b98c": "write Status from a0",
+  "b9aa": "write Cause from v0",
+  "b9cb": "write EPC from v1",
+  "b85a": "read ROM shadow v0 into v0",
+  "b87b": "read ROM shadow v1 into v1",
+  "b95c": "write ROM shadow v0 from a0",
+  "b97c": "write ROM shadow v1 from a0",
+  "ba00": "exception return via EPC",
+  "ba40": "clear Status IE",
+  "ba60": "set Status IE",
+  "feba": "synchronous trap with Cause exception field 28",
+  "ec32": "write LO from a0",
+  "ed30": "write HI from a1",
+  "6799": "qualified register-25 MOVE read into a0 returns zero",
+  "6759": "qualified register-25 MOVE read into v0 returns zero",
+  "653b": "qualified register-25 MOVE write from v1 has no observed GPR effect",
+  "653c": "qualified register-25 MOVE write from a0 has no observed GPR effect",
+  "653f": "qualified register-25 MOVE write from a3 has no observed GPR effect"
+}

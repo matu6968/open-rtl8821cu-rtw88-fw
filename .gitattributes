@@ -1,0 +1,2 @@
+# Unified-diff context lines start with a space.
+host/rtw88/*.patch whitespace=-blank-at-eol,-space-before-tab

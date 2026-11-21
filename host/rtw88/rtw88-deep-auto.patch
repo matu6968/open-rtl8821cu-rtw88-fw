@@ -1,0 +1,62 @@
+--- a/ps.c
++++ b/ps.c
+@@ -282,6 +282,10 @@
+ 		return;
+ 
+ 	__rtw_enter_lps(rtwdev, port_id);
++	if (rtwdev->hci.type == RTW_HCI_TYPE_USB && rtwdev->ps_enabled &&
++	    test_bit(RTW_FLAG_LEISURE_PS, rtwdev->flags) &&
++	    rtw_get_lps_deep_mode(rtwdev) == LPS_DEEP_MODE_NONE)
++		rtw_hci_deep_ps(rtwdev, true);
+ 	__rtw_enter_lps_deep(rtwdev);
+ }
+ 
+--- a/usb.c
++++ b/usb.c
+@@ -853,9 +853,12 @@
+ {
+ }
+ 
++static void source_deep_auto_schedule(struct rtw_dev *rtwdev);
++
+ static void rtw_usb_deep_ps(struct rtw_dev *rtwdev, bool enter)
+ {
+-	/* empty function for rtw_hci_ops */
++	if (enter)
++		source_deep_auto_schedule(rtwdev);
+ }
+ 
+ static void rtw_usb_link_ps(struct rtw_dev *rtwdev, bool enter)
+@@ -1293,6 +1296,7 @@
+ 	rtwusb = rtw_get_usb_priv(rtwdev);
+ 	rtwusb->rtwdev = rtwdev;
+ 	init_usb_anchor(&rtwusb->tx_anchor);
++	INIT_WORK(&rtwusb->source_deep_work, source_deep_auto_work);
+ 
+ 	ret = rtw_usb_alloc_rx_bufs(rtwusb);
+ 	if (ret)
+@@ -1479,6 +1483,8 @@
+ 	device_remove_file(&intf->dev, &dev_attr_source_deep_cycle_ms);
+ 	rtwdev = hw->priv;
+ 	rtwusb = rtw_get_usb_priv(rtwdev);
++	WRITE_ONCE(rtwusb->source_deep_disconnecting, true);
++	disable_work_sync(&rtwusb->source_deep_work);
+ 
+ 	if (rtwusb->source_wake_setup) {
+ 		device_init_wakeup(&intf->dev, false);
+--- a/usb.h
++++ b/usb.h
+@@ -62,6 +62,13 @@
+ };
+ 
+ struct rtw_usb {
++	struct work_struct source_deep_work;
++	u32 source_deep_auto_wakes;
++	u32 source_deep_auto_errors;
++	bool source_deep_auto_running;
++	bool source_deep_disconnecting;
++	bool source_deep_beacon;
++	bool source_deep_committed;
+ 	u16 source_deep_cookie;
+ 	u32 source_deep_cycles;
+ 	u32 source_deep_gated;

@@ -1,0 +1,69 @@
+--- a/Makefile
++++ b/Makefile
+@@ -21,6 +21,7 @@
+ rtw88_core-$(CONFIG_PM) += wow.o source_wow.o
+ 
+ rtw88_core-$(CONFIG_RTW88_LEDS) += led.o
++rtw88_core-y += source_fwlog.o
+ 
+ obj-$(CONFIG_RTW88_8822B)	+= rtw88_8822b.o
+ rtw88_8822b-objs		:= rtw8822b.o rtw8822b_table.o
+--- a/main.h
++++ b/main.h
+@@ -16,6 +16,7 @@
+ #include <linux/workqueue.h>
+ 
+ #include "util.h"
++#include "source_fwlog.h"
+ 
+ #define RTW_MAX_MAC_ID_NUM		32
+ #define RTW_MAX_SEC_CAM_NUM		32
+@@ -2081,6 +2082,7 @@
+ 
+ 	/* c2h cmd queue & handler work */
+ 	struct sk_buff_head c2h_queue;
++	struct rtw_fwlog source_fwlog;
+ 	struct work_struct c2h_work;
+ 	struct work_struct ips_work;
+ 	struct work_struct fw_recovery_work;
+--- a/main.c
++++ b/main.c
+@@ -2163,6 +2163,8 @@
+ 	INIT_WORK(&rtwdev->update_beacon_work, rtw_fw_update_beacon_work);
+ 	INIT_WORK(&rtwdev->ba_work, rtw_txq_ba_work);
+ 	skb_queue_head_init(&rtwdev->c2h_queue);
++	spin_lock_init(&rtwdev->source_fwlog.lock);
++	rtw_fwlog_reset(rtwdev);
+ 	skb_queue_head_init(&rtwdev->coex.queue);
+ 	skb_queue_head_init(&rtwdev->tx_report.queue);
+ 
+--- a/mac.c
++++ b/mac.c
+@@ -991,6 +991,8 @@
+ {
+ 	int ret;
+ 
++	rtw_fwlog_reset(rtwdev);
++
+ 	ret = _rtw_download_firmware(rtwdev, fw);
+ 	if (ret)
+ 		return ret;
+--- a/fw.c
++++ b/fw.c
+@@ -353,6 +353,16 @@
+ 	struct rtw_c2h_cmd *c2h;
+ 	u8 len;
+ 
++	if (pkt_offset > skb_headlen(skb) ||
++	    skb_headlen(skb) - pkt_offset < sizeof(*c2h)) {
++		dev_kfree_skb_any(skb);
++		return;
++	}
++	if (!skb_is_nonlinear(skb) &&
++	    rtw_fwlog_rx(rtwdev, skb->data + pkt_offset, skb->len - pkt_offset)) {
++		dev_kfree_skb_any(skb);
++		return;
++	}
+ 	c2h = (struct rtw_c2h_cmd *)(skb->data + pkt_offset);
+ 	len = skb->len - pkt_offset - 2;
+ 	*((u32 *)skb->cb) = pkt_offset;

@@ -1,0 +1,532 @@
+--- a/Makefile
++++ b/Makefile
+@@ -18,7 +18,7 @@
+ 	   sar.o \
+ 	   regd.o
+ 
+-rtw88_core-$(CONFIG_PM) += wow.o
++rtw88_core-$(CONFIG_PM) += wow.o source_wow.o
+ 
+ rtw88_core-$(CONFIG_RTW88_LEDS) += led.o
+ 
+--- a/fw.c
++++ b/fw.c
+@@ -2469,3 +2469,5 @@
+ 	rtw_dbg(rtwdev, RTW_DBG_HW_SCAN,
+ 		"Chan switch: %x, id: %x, status: %x\n", chan, id, status);
+ }
++
++EXPORT_SYMBOL_GPL(rtw_fw_h2c_cmd_dbg);
+--- a/led.c
++++ b/led.c
+@@ -13,11 +13,39 @@
+ 
+ 	mutex_lock(&rtwdev->mutex);
+ 
+-	rtwdev->chip->ops->led_set(led, brightness);
++	/* A late LED worker must never touch a suspended USB transport. */
++	if (!rtwdev->source_wow_led_suspended && !rtwdev->source_wow_suspended)
++		rtwdev->chip->ops->led_set(led, brightness);
+ 
+ 	mutex_unlock(&rtwdev->mutex);
+ 
+ 	return 0;
++}
++
++/* Called without rtwdev->mutex: LED core flushes a worker that takes it. */
++void rtw_led_suspend(struct rtw_dev *rtwdev)
++{
++	if (!rtwdev->led_registered || rtwdev->source_wow_led_suspended)
++		return;
++
++	/* Set LED_SUSPENDED and flush the final LED_OFF while USB is awake. */
++	led_classdev_suspend(&rtwdev->led_cdev);
++	mutex_lock(&rtwdev->mutex);
++	rtwdev->source_wow_led_suspended = true;
++	mutex_unlock(&rtwdev->mutex);
++}
++
++/* USB and firmware have resumed before releasing LED ownership. */
++void rtw_led_resume(struct rtw_dev *rtwdev)
++{
++	if (!rtwdev->led_registered || !rtwdev->source_wow_led_suspended)
++		return;
++
++	mutex_lock(&rtwdev->mutex);
++	rtwdev->source_wow_led_suspended = false;
++	mutex_unlock(&rtwdev->mutex);
++	/* Replay LED core's latest requested brightness and resume its trigger. */
++	led_classdev_resume(&rtwdev->led_cdev);
+ }
+ 
+ void rtw_led_init(struct rtw_dev *rtwdev)
+@@ -72,3 +100,7 @@
+ 	rtwdev->chip->ops->led_set(led, LED_OFF);
+ 	led_classdev_unregister(led);
+ }
++
++EXPORT_SYMBOL_GPL(rtw_led_suspend);
++
++EXPORT_SYMBOL_GPL(rtw_led_resume);
+--- a/led.h
++++ b/led.h
+@@ -9,6 +9,8 @@
+ 
+ void rtw_led_init(struct rtw_dev *rtwdev);
+ void rtw_led_deinit(struct rtw_dev *rtwdev);
++void rtw_led_suspend(struct rtw_dev *rtwdev);
++void rtw_led_resume(struct rtw_dev *rtwdev);
+ 
+ #else
+ 
+@@ -20,6 +22,14 @@
+ {
+ }
+ 
++static inline void rtw_led_suspend(struct rtw_dev *rtwdev)
++{
++}
++
++static inline void rtw_led_resume(struct rtw_dev *rtwdev)
++{
++}
++
+ #endif
+ 
+ #endif
+--- a/mac80211.c
++++ b/mac80211.c
+@@ -13,6 +13,8 @@
+ #include "bf.h"
+ #include "debug.h"
+ #include "wow.h"
++#include "source_wow.h"
++#include "led.h"
+ #include "sar.h"
+ 
+ static void rtw_ops_tx(struct ieee80211_hw *hw,
+@@ -837,13 +839,22 @@
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 	int ret;
+ 
+-	mutex_lock(&rtwdev->mutex);
+-	ret = rtw_wow_suspend(rtwdev, wowlan);
++	/* Watchdog also takes mutex: synchronously cancel before locking. */
++	if (rtw_source_wow_enabled(rtwdev)) {
++		cancel_delayed_work_sync(&rtwdev->watch_dog_work);
++		rtw_led_suspend(rtwdev);
++	}
++	mutex_lock(&rtwdev->mutex);
++	ret = rtw_source_wow_enabled(rtwdev) ?
++		rtw_source_wow_suspend(rtwdev, wowlan) : rtw_wow_suspend(rtwdev, wowlan);
+ 	if (ret)
+ 		rtw_err(rtwdev, "failed to suspend for wow %d\n", ret);
+ 	mutex_unlock(&rtwdev->mutex);
+-
+-	return ret ? 1 : 0;
++	if (ret && rtw_source_wow_enabled(rtwdev))
++		rtw_source_wow_abort(rtwdev);
++
++	/* Abort system suspend if arming the configured wake source failed. */
++	return rtw_source_wow_enabled(rtwdev) ? ret : (ret ? 1 : 0);
+ }
+ 
+ static int rtw_ops_resume(struct ieee80211_hw *hw)
+@@ -852,10 +863,16 @@
+ 	int ret;
+ 
+ 	mutex_lock(&rtwdev->mutex);
+-	ret = rtw_wow_resume(rtwdev);
++	ret = rtw_source_wow_enabled(rtwdev) ?
++		rtw_source_wow_resume(rtwdev) : rtw_wow_resume(rtwdev);
++	if (rtw_source_wow_enabled(rtwdev))
++		ieee80211_queue_delayed_work(rtwdev->hw, &rtwdev->watch_dog_work,
++					     RTW_WATCH_DOG_DELAY_TIME);
+ 	if (ret)
+ 		rtw_err(rtwdev, "failed to resume for wow %d\n", ret);
+ 	mutex_unlock(&rtwdev->mutex);
++	if (rtw_source_wow_enabled(rtwdev))
++		rtw_led_resume(rtwdev);
+ 
+ 	return ret ? 1 : 0;
+ }
+@@ -873,10 +890,22 @@
+ {
+ 	struct rtw_dev *rtwdev = hw->priv;
+ 
+-	mutex_lock(&rtwdev->mutex);
+-	if (reconfig_type == IEEE80211_RECONFIG_TYPE_RESTART)
++	bool restore_led = false;
++
++	mutex_lock(&rtwdev->mutex);
++	if (reconfig_type == IEEE80211_RECONFIG_TYPE_RESTART) {
+ 		clear_bit(RTW_FLAG_RESTARTING, rtwdev->flags);
+-	mutex_unlock(&rtwdev->mutex);
++		if (rtwdev->source_wow_recovery) {
++			rtwdev->source_wow_recovery = false;
++			rtwdev->source_wow_recovery_queued = false;
++			restore_led = true;
++		}
++	}
++	mutex_unlock(&rtwdev->mutex);
++	if (restore_led) {
++		rtw_led_resume(rtwdev);
++		rtw_info(rtwdev, "source WoW hardware recovery completed\n");
++	}
+ }
+ 
+ static int rtw_ops_hw_scan(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+--- a/main.c
++++ b/main.c
+@@ -8,6 +8,7 @@
+ #include "regd.h"
+ #include "fw.h"
+ #include "ps.h"
++#include "source_wow.h"
+ #include "sec.h"
+ #include "mac.h"
+ #include "coex.h"
+@@ -645,6 +646,15 @@
+ 	set_bit(RTW_FLAG_RESTARTING, rtwdev->flags);
+ 	clear_bit(RTW_FLAG_RESTART_TRIGGERING, rtwdev->flags);
+ 
++	if (rtwdev->source_wow_recovery) {
++		/* A lost WoW rollback is not a vendor firmware crash. Do not
++		 * decode/dump a foreign firmware ABI or WARN for this recovery.
++		 */
++		++rtwdev->source_wow_restarts;
++		rtw_warn(rtwdev, "source WoW rollback recovery: resetting hardware (attempt=%u)\n",
++			 rtwdev->source_wow_restarts);
++		goto reset_state;
++	}
+ 	ret = rtw_fwcd_prep(rtwdev);
+ 	if (ret)
+ 		goto free;
+@@ -662,12 +672,16 @@
+ 
+ 	WARN(1, "firmware crash, start reset and recover\n");
+ 
++reset_state:
+ 	rcu_read_lock();
+ 	rtw_iterate_keys_rcu(rtwdev, NULL, rtw_reset_key_iter, rtwdev);
+ 	rcu_read_unlock();
+ 	rtw_iterate_stas_atomic(rtwdev, rtw_reset_sta_iter, rtwdev);
+ 	rtw_iterate_vifs_atomic(rtwdev, rtw_reset_vif_iter, rtwdev);
+ 	bitmap_zero(rtwdev->hw_port, RTW_PORT_NUM);
++	rtwdev->source_wow_suspended = false;
++	rtwdev->wow.wow_vif = NULL;
++	clear_bit(RTW_FLAG_WOWLAN, rtwdev->flags);
+ 	rtw_enter_ips(rtwdev);
+ }
+ 
+@@ -676,9 +690,18 @@
+ 	struct rtw_dev *rtwdev = container_of(work, struct rtw_dev,
+ 					      fw_recovery_work);
+ 
++	bool source_wow = READ_ONCE(rtwdev->source_wow_recovery);
++
++	/* A failed cfg80211 suspend still owns the wiphy lock. Wait until
++	 * its negative return has unwound before resetting peer/key state.
++	 */
++	if (source_wow)
++		wiphy_lock(rtwdev->hw->wiphy);
+ 	mutex_lock(&rtwdev->mutex);
+ 	__fw_recovery_work(rtwdev);
+ 	mutex_unlock(&rtwdev->mutex);
++	if (source_wow)
++		wiphy_unlock(rtwdev->hw->wiphy);
+ 
+ 	ieee80211_restart_hw(rtwdev->hw);
+ }
+@@ -2300,7 +2323,8 @@
+ 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SET_SCAN_DWELL);
+ 
+ #ifdef CONFIG_PM
+-	hw->wiphy->wowlan = rtwdev->chip->wowlan_stub;
++	hw->wiphy->wowlan = rtw_source_wow_enabled(rtwdev) ?
++		&rtw_source_wowlan_support : rtwdev->chip->wowlan_stub;
+ 	hw->wiphy->max_sched_scan_ssids = rtwdev->chip->max_sched_scan_ssids;
+ #endif
+ 	rtw_set_supported_band(hw, rtwdev->chip);
+@@ -2343,6 +2367,8 @@
+ 
+ void rtw_unregister_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
+ {
++	/* Source-WoW abort may queue recovery outside mac80211 workqueues. */
++	cancel_work_sync(&rtwdev->fw_recovery_work);
+ 	ieee80211_unregister_hw(hw);
+ 	rtw_debugfs_deinit(rtwdev);
+ 	rtw_led_deinit(rtwdev);
+--- a/main.h
++++ b/main.h
+@@ -2051,6 +2051,18 @@
+ };
+ 
+ struct rtw_dev {
++	u16 source_wow_cookie;
++	bool source_wow_suspended;
++	bool source_wow_reset;
++	bool source_wow_led_suspended;
++	bool source_wow_recovery;
++	bool source_wow_recovery_queued;
++	u32 source_wow_auth_errors;
++	u32 source_wow_arm_errors;
++	u32 source_wow_rollback_errors;
++	u32 source_wow_restarts;
++	int source_wow_arm_errno;
++	int source_wow_rollback_errno;
+ 	struct ieee80211_hw *hw;
+ 	struct device *dev;
+ 
+--- a/ps.c
++++ b/ps.c
+@@ -341,3 +341,7 @@
+ 		rtw_leave_lps(rtwdev);
+ 	}
+ }
++
++EXPORT_SYMBOL_GPL(rtw_enter_lps);
++
++EXPORT_SYMBOL_GPL(rtw_leave_lps);
+--- a/rtw8821cu.c
++++ b/rtw8821cu.c
+@@ -54,6 +54,9 @@
+ 	.id_table = rtw_8821cu_id_table,
+ 	.probe = rtw_8821cu_probe,
+ 	.disconnect = rtw_usb_disconnect,
++	.suspend = rtw_usb_suspend,
++	.resume = rtw_usb_resume,
++	.reset_resume = rtw_usb_reset_resume,
+ };
+ module_usb_driver(rtw_8821cu_driver);
+ 
+--- a/usb.c
++++ b/usb.c
+@@ -4,6 +4,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/usb.h>
++#include <linux/suspend.h>
+ #include <linux/mutex.h>
+ #include "main.h"
+ #include "debug.h"
+@@ -14,6 +15,7 @@
+ #include "fw.h"
+ #include "ps.h"
+ #include "usb.h"
++#include "source_wow.h"
+ 
+ static bool rtw_switch_usb_mode = true;
+ module_param_named(switch_usb_mode, rtw_switch_usb_mode, bool, 0644);
+@@ -374,6 +376,8 @@
+ 
+ 	if (ep < 0)
+ 		return ep;
++	if (READ_ONCE(rtwusb->suspended))
++		return -ESHUTDOWN;
+ 
+ 	pipe = usb_sndbulkpipe(usbd, rtwusb->out_ep[ep]);
+ 	urb = usb_alloc_urb(0, GFP_ATOMIC);
+@@ -382,7 +386,10 @@
+ 
+ 	usb_fill_bulk_urb(urb, usbd, pipe, skb->data, skb->len, cb, context);
+ 	urb->transfer_flags |= URB_ZERO_PACKET;
++	usb_anchor_urb(urb, &rtwusb->tx_anchor);
+ 	ret = usb_submit_urb(urb, GFP_ATOMIC);
++	if (ret)
++		usb_unanchor_urb(urb);
+ 
+ 	usb_free_urb(urb);
+ 
+@@ -693,6 +700,10 @@
+ 	struct sk_buff *rx_skb;
+ 	int error;
+ 
++	if (READ_ONCE(rtwusb->suspended)) {
++		rxcb->rx_skb = NULL;
++		return;
++	}
+ 	rx_skb = skb_dequeue(&rtwusb->rx_free_queue);
+ 	if (!rx_skb)
+ 		rx_skb = alloc_skb(RTW_USB_MAX_RECVBUF_SZ, gfp);
+@@ -1257,6 +1268,8 @@
+ 	}
+ }
+ 
++#include "source_deep.inc"
++
+ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+ {
+ 	struct rtw_dev *rtwdev;
+@@ -1279,6 +1292,7 @@
+ 
+ 	rtwusb = rtw_get_usb_priv(rtwdev);
+ 	rtwusb->rtwdev = rtwdev;
++	init_usb_anchor(&rtwusb->tx_anchor);
+ 
+ 	ret = rtw_usb_alloc_rx_bufs(rtwusb);
+ 	if (ret)
+@@ -1329,7 +1343,20 @@
+ 		goto err_destroy_rxwq;
+ 	}
+ 
++	if (rtw_source_wow_enabled(rtwdev)) {
++		rtwusb->original_wakeup = device_may_wakeup(&rtwusb->udev->dev);
++		if (!device_can_wakeup(&rtwusb->udev->dev)) {
++			rtw_warn(rtwdev, "source WoW: USB device lacks remote-wake capability\n");
++		} else {
++			device_init_wakeup(&intf->dev, true);
++			device_set_wakeup_enable(&rtwusb->udev->dev, true);
++			rtwusb->source_wake_setup = true;
++		}
++	}
+ 	rtw_usb_setup_rx(rtwdev);
++	if (rtw_source_wow_enabled(rtwdev) &&
++	    device_create_file(&intf->dev, &dev_attr_source_deep_cycle_ms))
++		rtw_warn(rtwdev, "source deep sysfs registration failed\n");
+ 
+ 	return 0;
+ 
+@@ -1355,19 +1382,111 @@
+ }
+ EXPORT_SYMBOL(rtw_usb_probe);
+ 
+-void rtw_usb_disconnect(struct usb_interface *intf)
++
++/* USB core ignores interface suspend errors during system sleep. Register a
++ * wake event as well, so failed preparation cannot silently continue asleep.
++ */
++static int rtw_usb_suspend_error(struct rtw_usb *rtwusb, int error)
++{
++	/* The parent may itself have lost wake authorization. Attribute the
++	 * failure to the interface and unconditionally abort system suspend.
++	 */
++	pm_wakeup_event(rtwusb->rtwdev->dev, 0);
++	pm_system_wakeup();
++	return error;
++}
++
++/* The cfg80211 callback armed the unified firmware before USB core gets here.
++ * Do not stop the MAC, RX DMA or CPU: the firmware must inspect its RX FIFO.
++ */
++int rtw_usb_suspend(struct usb_interface *intf, pm_message_t message)
+ {
+ 	struct ieee80211_hw *hw = usb_get_intfdata(intf);
+ 	struct rtw_dev *rtwdev;
+ 	struct rtw_usb *rtwusb;
++	int i;
++
++	if (!hw || PMSG_IS_AUTO(message))
++		return -EOPNOTSUPP;
++	rtwdev = hw->priv;
++	rtwusb = rtw_get_usb_priv(rtwdev);
++	if (rtwdev->source_wow_suspended &&
++	    (!rtwusb->source_wake_setup ||
++	     !device_may_wakeup(&rtwusb->udev->dev)))
++		return rtw_usb_suspend_error(rtwusb, -EOPNOTSUPP);
++
++	flush_workqueue(rtwusb->txwq);
++	for (i = 0; i < ARRAY_SIZE(rtwusb->tx_queue); i++)
++		if (!skb_queue_empty(&rtwusb->tx_queue[i]))
++			return rtw_usb_suspend_error(rtwusb, -EBUSY);
++	if (!usb_wait_anchor_empty_timeout(&rtwusb->tx_anchor, 500))
++		return rtw_usb_suspend_error(rtwusb, -EBUSY);
++
++	WRITE_ONCE(rtwusb->suspended, true);
++	cancel_work_sync(&rtwusb->rx_urb_work);
++	rtw_usb_cancel_rx_bufs(rtwusb);
++	flush_workqueue(rtwusb->rxwq);
++	intf->needs_remote_wakeup = rtwdev->source_wow_suspended;
++	rtw_info(rtwdev, "source USB suspended: remote_wakeup=%u\n",
++		 intf->needs_remote_wakeup);
++	return 0;
++}
++EXPORT_SYMBOL_GPL(rtw_usb_suspend);
++
++int rtw_usb_resume(struct usb_interface *intf)
++{
++	struct ieee80211_hw *hw = usb_get_intfdata(intf);
++	struct rtw_dev *rtwdev;
++	struct rtw_usb *rtwusb;
++
++	if (!hw)
++		return -ENODEV;
++	rtwdev = hw->priv;
++	rtwusb = rtw_get_usb_priv(rtwdev);
++	if (READ_ONCE(rtwusb->suspended)) {
++		WRITE_ONCE(rtwusb->suspended, false);
++		rtw_usb_setup_rx(rtwdev);
++	}
++	intf->needs_remote_wakeup = 0;
++	rtw_info(rtwdev, "source USB resumed\n");
++	return 0;
++}
++EXPORT_SYMBOL_GPL(rtw_usb_resume);
++
++int rtw_usb_reset_resume(struct usb_interface *intf)
++{
++	struct ieee80211_hw *hw = usb_get_intfdata(intf);
++
++	if (hw) {
++		struct rtw_dev *rtwdev = hw->priv;
++
++		/* A bus reset invalidates an association-preserving claim. */
++		rtwdev->source_wow_reset = true;
++	}
++	return rtw_usb_resume(intf);
++}
++EXPORT_SYMBOL_GPL(rtw_usb_reset_resume);
++
++void rtw_usb_disconnect(struct usb_interface *intf)
++{
++	struct ieee80211_hw *hw = usb_get_intfdata(intf);
++	struct rtw_dev *rtwdev;
++	struct rtw_usb *rtwusb;
+ 
+ 	if (!hw)
+ 		return;
+ 
++	device_remove_file(&intf->dev, &dev_attr_source_deep_cycle_ms);
+ 	rtwdev = hw->priv;
+ 	rtwusb = rtw_get_usb_priv(rtwdev);
+ 
++	if (rtwusb->source_wake_setup) {
++		device_init_wakeup(&intf->dev, false);
++		device_set_wakeup_enable(&rtwusb->udev->dev, rtwusb->original_wakeup);
++	}
++	WRITE_ONCE(rtwusb->suspended, true);
+ 	rtw_usb_cancel_rx_bufs(rtwusb);
++	usb_kill_anchored_urbs(&rtwusb->tx_anchor);
+ 
+ 	rtw_unregister_hw(rtwdev, hw);
+ 	rtw_usb_deinit_tx(rtwdev);
+--- a/usb.h
++++ b/usb.h
+@@ -62,6 +62,18 @@
+ };
+ 
+ struct rtw_usb {
++	u16 source_deep_cookie;
++	u32 source_deep_cycles;
++	u32 source_deep_gated;
++	u32 source_deep_autonomous;
++	int source_deep_observation_error;
++	bool source_deep_delivery;
++	int source_deep_errno;
++	bool source_deep_failed;
++	struct usb_anchor tx_anchor;
++	bool suspended;
++	bool original_wakeup;
++	bool source_wake_setup;
+ 	struct rtw_dev *rtwdev;
+ 	struct usb_device *udev;
+ 
+@@ -99,5 +107,8 @@
+ 
+ int rtw_usb_probe(struct usb_interface *intf, const struct usb_device_id *id);
+ void rtw_usb_disconnect(struct usb_interface *intf);
++int rtw_usb_suspend(struct usb_interface *intf, pm_message_t message);
++int rtw_usb_resume(struct usb_interface *intf);
++int rtw_usb_reset_resume(struct usb_interface *intf);
+ 
+ #endif

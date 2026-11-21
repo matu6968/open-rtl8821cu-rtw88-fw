@@ -1,0 +1,33 @@
+Firmware
+========
+
+The firmware is distributed under version 2 of the GNU General Public
+License, as published by the Free Software Foundation. See COPYING.
+
+The RTL8821C IQ calibration implementation in src/station/iqk_vendor.inc
+and the state layout in src/station/iqk_state.h are adapted from Realtek
+PHYDM in RTL8821CU Wi-Fi driver v5.2.5.3_24795.20171031_COEX20170310-1212.
+The source header phydm_iqk.h carries the following notice:
+
+    Copyright(c) 2007 - 2011 Realtek Corporation. All rights reserved.
+
+The adaptations use standalone MMIO and timing, bounded calibration, and
+a single RF path. The corresponding original source files were
+hal/phydm/rtl8821c/phydm_iqk_8821c.c and hal/phydm/phydm_iqk.h.
+
+Linux rtw88
+===========
+
+Factory eFuse layout, the board option interpretation, and conventions
+for communicating with the driver reference Linux rtw88. The optional
+patches in host/rtw88/ apply to Ubuntu Linux source 7.0.0-43.43. The
+rtw88 files retain their upstream license terms and copyright notices.
+
+    Copyright(c) 2018-2019 Realtek Corporation
+
+The rtw88 patches and overlay sources are available under GPL-2.0 terms.
+Overlay files carrying a dual-license SPDX identifier retain either
+license as provided in the source. For the BSD-3-Clause terms see the
+Linux license text:
+
+    https://github.com/torvalds/linux/blob/master/LICENSES/preferred/BSD-3-Clause
