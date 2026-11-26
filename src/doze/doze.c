@@ -3,6 +3,7 @@
 #include "beacon.h"
 #include "radio.h"
 #include "../broader/broader.h"
+#include "../coex/coex.h"
 #include "../powersave/lps.h"
 #include "../fwlog/fwlog.h"
 #include "../deep/deep.h"
@@ -30,13 +31,14 @@ static void unsync(void)
 void station_doze_init(void)
 {
     station_beacon_init();radio_init();
-    g_doze.enabled=1;
-    g_doze.state=DOZE_OBSERVING;
+    g_doze.enabled=diag_uses_usb();
+    g_doze.state=g_doze.enabled?DOZE_OBSERVING:DOZE_DISABLED;
 }
 
 void station_doze_media(uint32_t connected)
 {
     g_doze.connected=!!connected;
+    if (!g_doze.enabled) return;
     station_beacon_media(connected);
     unsync();
     if (!connected) {
@@ -79,13 +81,15 @@ uint32_t station_doze_pre(void)
     if (g_station.iqk_completed && !station_transport_active()) {
         if (g_doze.connected || g_beacon.context_valid) {
             g_doze.connected=0;++g_doze.cancels;
-            station_beacon_cancel();station_lps_cancel();unsync();
+            station_beacon_cancel();station_lps_cancel();
+            if (g_doze.enabled) unsync();
         }
         /* Invalidate the report generation after an external MAC/BB reset.
          * Owned RF doze never calls this while its own BB bit is clear.
          */
         (void)station_transport_ready();
         fw_log_transport_lost();
+        coex_transport_lost();
         return 0;
     }
     return 1;
@@ -93,7 +97,7 @@ uint32_t station_doze_pre(void)
 
 void station_doze_poll(void)
 {
-    if (!g_doze.connected || radio_owned() || !radio_awake()) return;
+    if (!g_doze.enabled || !g_doze.connected || radio_owned() || !radio_awake()) return;
     struct beacon_event event;
     uint32_t fresh=station_beacon_poll(&event);
     uint32_t now=foundation_now_us();g_doze.now_us=now;
@@ -146,7 +150,7 @@ void station_doze_poll(void)
     }
     if (g_doze.error) {g_doze.state=DOZE_DISABLED;return;}
     g_doze.state=g_doze.sync_streak<2u?DOZE_WAIT_BEACON:DOZE_OBSERVING;
-    if (!g_doze.enabled || g_doze.sync_streak<2u || g_beacon.state!=BEACON_SYNCED ||
+    if (g_doze.sync_streak<2u || g_beacon.state!=BEACON_SYNCED ||
         g_lps.state!=LPS_AP_PS || g_lps.ap_ps!=1u || !g_lps.requested_mode ||
         !g_doze.next_wake_us || due(now+2000u,g_doze.next_wake_us)) return;
     if (deep_hold_radio_awake()) return;

@@ -114,18 +114,29 @@ void model_reset(void)
     now = active = busy = frame_count = iqk_errors = iqk_report = 0;
 }
 
-void model_boot(uint32_t board, uint32_t bt_function, uint32_t valid, uint32_t timeout)
+void model_boot(uint32_t board, uint32_t bt_function, uint32_t valid,
+                uint32_t timeout, uint32_t status)
 {
     const uint8_t packets[] = {
         0x0e, 0x29, valid ? 0x81 : 0xff,    /* ID at logical 0x00. */
         0x0f, 0x3e, 0xff, board,            /* Board option at 0xc1. */
         0x2f, 0x3d, 2, 0xff,               /* RFE option at 0xca. */
+        0x4f, 0x38, 0x02, 0x11, 0x22, 0x33, 0x44, 0x55, /* PCIe 0xd0. */
+        0x0f, 0x47, 0xff, 0x02,             /* USB 0x107. */
+        0x2f, 0x48, 0x22, 0x33, 0x44, 0x55, 0x66, 0xff,
+        0x6f, 0x41, 0x02, 0x33, 0x44, 0x55, 0x66, 0x77, /* SDIO 0x11a. */
     };
     memset(efuse, 0xff, sizeof(efuse));
     memcpy(efuse, packets, sizeof(packets));
     efuse_timeout = timeout;
-    diag_decode_chip(&g_diag.chip, 0, 0, 4u | (bt_function << 18));
+    diag_decode_chip(&g_diag.chip, 0, status, 4u | (bt_function << 18));
     compat_init();
+}
+
+uint64_t model_mac(void)
+{
+    return ((uint64_t)g_compat.board.mac_valid << 48) |
+        ((uint64_t)g_compat.board.mac_hi << 32) | g_compat.board.mac_lo;
 }
 
 uint32_t model_ready(void)

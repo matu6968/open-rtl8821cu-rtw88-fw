@@ -44,7 +44,8 @@ static inline void compat_write16(uint32_t a, uint32_t v) { *(volatile uint16_t 
 #endif
 uint32_t compat_expand_efuse(const uint8_t *physical, uint32_t size,
                              uint8_t *logical, uint32_t *used);
-void compat_decode_board(const uint8_t *logical, volatile struct board_info *board);
+void compat_decode_board(const uint8_t *logical, enum diag_hci hci,
+                         volatile struct board_info *board);
 void compat_build_feature(const uint8_t *physical, uint8_t *feature);
 void compat_init(void);
 void compat_poll(void);

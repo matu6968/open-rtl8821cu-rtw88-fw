@@ -21,9 +21,10 @@
 enum diag_state { DIAG_STARTING, DIAG_RUNNING, DIAG_FAILED };
 enum diag_event_id {
     EVENT_BOOT = 1, EVENT_ABI = 2, EVENT_CHIP = 3, EVENT_HEARTBEAT = 4,
-    EVENT_BT_DISABLED = 5, EVENT_ERROR = 255
+    EVENT_BT_DISABLED = 5, EVENT_HOST_INTERFACE = 6, EVENT_ERROR = 255
 };
 enum diag_error { ERROR_NONE, ERROR_ABI, ERROR_STACK, ERROR_FOUNDATION };
+enum diag_hci { DIAG_HCI_UNKNOWN = 0, DIAG_HCI_USB = 1, DIAG_HCI_SDIO = 2, DIAG_HCI_PCIE = 3 };
 
 /* Keep runtime function flags and the factory board observation independent.
  * All ABI members are u32, including boolean and unknown-valued observations.
@@ -63,6 +64,31 @@ _Static_assert(sizeof(struct diag_event) == 16, "event ABI");
 extern volatile struct diag_status g_diag;
 extern volatile struct diag_event g_events[DIAG_RING_CAPACITY];
 extern volatile uint32_t g_abi_results[6];
+
+/* Stock WLAN 24.11.0 at 0x80102014 reads SYS_STATUS1 (0x00f4).
+ * Keep interface IDs numerically aligned with the stock decoder.
+ */
+static inline uint32_t diag_hci_strap(uint32_t status)
+{
+    return (status >> 12) & 3u;
+}
+
+static inline enum diag_hci diag_host_interface(uint32_t status)
+{
+    if (status == DIAG_UNKNOWN)
+        return DIAG_HCI_UNKNOWN;
+    uint32_t strap = diag_hci_strap(status);
+    if (strap == 0)
+        return DIAG_HCI_SDIO;
+    if (strap == 1)
+        return DIAG_HCI_USB;
+    return DIAG_HCI_PCIE;
+}
+
+static inline uint32_t diag_uses_usb(void)
+{
+    return diag_hci_strap(g_diag.chip.raw_sys_status1) == 1u;
+}
 
 static inline void compiler_barrier(void)
 {

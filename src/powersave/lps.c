@@ -203,6 +203,8 @@ uint32_t station_lps_h2c(uint32_t lo, uint32_t hi)
         ++g_lps.reserved_updates;
         return 1;
     }
+    /* Awake-only interfaces use the idempotent station_power_h2c handler. */
+    if (!diag_uses_usb()) return 0;
     uint32_t mode = (lo >> 8) & 127u, rlbm = (lo >> 16) & 15u;
     uint32_t smart = (lo >> 20) & 15u, interval = lo >> 24;
     uint32_t port = (hi >> 5) & 7u, state = (hi >> 8) & 255u;

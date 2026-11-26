@@ -25,6 +25,17 @@ _start:
 	and $4, $5
 	beqz $4, 3f
 	nop
+	/* The source retention context belongs to the USB strap only.
+	 * Match diag_host_interface() before reading a saved USB context.
+	 */
+	lui $4, 0xb860
+	lw $4, 0xf4($4)
+	li $5, 0x3000
+	and $4, $5
+	li $5, 0x1000
+	cmp $4, $5
+	btnez 3f
+	nop
 	la $7, g_deep_resume
 	lw $4, 0($7)
 	la $5, 0x31534d52

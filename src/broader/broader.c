@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "broader.h"
 #include "../ap/ap.h"
+#include "../coex/coex.h"
 #include "../station/rate.h"
 #include "../station/power.h"
 #include "../powersave/lps.h"
@@ -45,6 +46,9 @@ uint32_t broader_register_h2c(uint32_t lo, uint32_t hi)
     if (!result) result = station_lps_h2c(lo,hi);
     if (!result) result = station_power_h2c(lo,hi);
     if (!result) result = fw_log_h2c(lo,hi);
+#ifdef RTL8821CU_COEX_BOARD
+    if (!result) result = coex_h2c(lo, hi);
+#endif
     if (result == 1) {
         ++g_broader.register_handled;
         return 1;
@@ -59,6 +63,10 @@ void broader_poll(void)
     uint32_t ap = ap_poll();
     station_lps_poll();
     if (station_transport_ready()) station_rate_poll();
+    if (ap) coex_transport_lost();
     if (!ap) station_doze_poll();
-    if (!radio_owned()) fw_log_poll();
+    if (!radio_owned()) {
+        if (!ap) coex_poll();
+        fw_log_poll();
+    }
 }

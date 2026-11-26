@@ -17,7 +17,7 @@ STATUS_FIELDS = (
     "chip.bt_board_flag", "chip.bt_enabled", "chip.bt_supported",
 )
 EVENT_NAMES = {1: "boot", 2: "abi", 3: "chip", 4: "heartbeat",
-               5: "bluetooth_disabled", 255: "error"}
+               5: "bluetooth_disabled", 6: "host_interface", 255: "error"}
 
 
 class Elf32:

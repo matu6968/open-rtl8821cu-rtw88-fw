@@ -49,21 +49,32 @@ uint32_t compat_expand_efuse(const uint8_t *physical, uint32_t size,
     return COMPAT_OK;
 }
 
-/* Offsets follow the packed USB rtw8821c_efuse map, not the PCIe layout.
- * Preserve erased fields as 0xff; leave default/regulatory policy to Linux.
+/* Match the bus-specific MAC fields and common RF fields in rtw8821c_efuse.
+ * Preserve erased fields as 0xff and leave default/regulatory policy to Linux.
  */
-void compat_decode_board(const uint8_t *l, volatile struct board_info *b)
+void compat_decode_board(const uint8_t *l, enum diag_hci hci,
+                         volatile struct board_info *b)
 {
-    uint32_t any = 0, all = 255;
-    b->rtl_id = l[0] | ((uint32_t)l[1] << 8);
-    b->mac_lo = l[0x107] | ((uint32_t)l[0x108] << 8) |
-        ((uint32_t)l[0x109] << 16) | ((uint32_t)l[0x10a] << 24);
-    b->mac_hi = l[0x10b] | ((uint32_t)l[0x10c] << 8);
-    for (uint32_t i = 0; i < 6; ++i) {
-        any |= l[0x107 + i];
-        all &= l[0x107 + i];
+    uint32_t offset = 0, any = 0, all = 255;
+    switch (hci) {
+    case DIAG_HCI_USB:  offset = 0x107; break;
+    case DIAG_HCI_SDIO: offset = 0x11a; break;
+    case DIAG_HCI_PCIE: offset = 0xd0; break;
+    default: break;
     }
-    b->mac_valid = any && all != 255 && !(l[0x107] & 1);
+    b->mac_valid = b->mac_lo = b->mac_hi = 0;
+    if (offset) {
+        const uint8_t *mac = l + offset;
+        b->mac_lo = mac[0] | ((uint32_t)mac[1] << 8) |
+            ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24);
+        b->mac_hi = mac[4] | ((uint32_t)mac[5] << 8);
+        for (uint32_t i = 0; i < 6; ++i) {
+            any |= mac[i];
+            all &= mac[i];
+        }
+        b->mac_valid = any && all != 255 && !(mac[0] & 1);
+    }
+    b->rtl_id = l[0] | ((uint32_t)l[1] << 8);
     b->rfe = l[0xca] & 31;
     b->package = (l[0xca] >> 5) & 1;
     b->crystal = l[0xb9]; b->thermal = l[0xba];

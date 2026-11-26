@@ -40,6 +40,7 @@ _Noreturn void diag_main(void)
         diag_decode_chip(&g_diag.chip, cfg, status, functions);
         (void)diag_set_bt_enabled(&g_diag.chip, 0);
         diag_emit(EVENT_CHIP, cfg, functions);
+        diag_emit(EVENT_HOST_INTERFACE, status, diag_host_interface(status));
         diag_emit(EVENT_BT_DISABLED, g_diag.chip.bt_func_flag, DIAG_UNKNOWN);
     }
     g_diag.stack_ok = stack_guard_ok();

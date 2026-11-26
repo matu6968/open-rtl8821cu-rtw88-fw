@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #include "compat.h"
 #include "../broader/broader.h"
+#include "../coex/coex.h"
 #include "../doze/radio.h"
+#include "../fwlog/fwlog.h"
 
 #define MAC 0xb8600000u
 #define MCU 0xb8640000u
@@ -47,12 +49,17 @@ void compat_init(void)
         error = compat_expand_efuse(g_efuse_physical, EFUSE_USABLE, g_efuse_logical, &used);
     g_compat.efuse_used = used;
     if (!error) {
-        compat_decode_board(g_efuse_logical, &g_compat.board);
+        compat_decode_board(g_efuse_logical,
+                            diag_host_interface(g_diag.chip.raw_sys_status1),
+                            &g_compat.board);
         if (!g_compat.board.valid)
             error = COMPAT_BAD_BOARD;
     }
     g_diag.chip.bt_board_flag = error ? DIAG_UNKNOWN : g_compat.board.bt_board;
-    diag_log_chip(&g_diag.chip);
+    if (!error && coex_configure())
+        fw_log(FW_LOG_ALWAYS, "RTL8821CU: experimental Bluetooth mailbox");
+    else
+        diag_log_chip(&g_diag.chip);
     if (error) {
         g_compat.error = error;
         g_compat.state = COMPAT_FAILED;

@@ -31,6 +31,7 @@ static void acknowledge(uint32_t status)
 }
 void deep_init(void)
 {
+    if (!diag_uses_usb()) return;
     clock_init();
     uint32_t saved=core_irq_save();
     g_deep.saved_ft1imr=foundation_read32(FT1IMR);
@@ -41,6 +42,7 @@ void deep_init(void)
 }
 uint32_t deep_rpwm_irq(struct core_frame *frame)
 {
+    if (!diag_uses_usb()) return 0;
     uint32_t handled=clock_timer_irq();
     uint32_t pending=foundation_read32(FT1ISR);
     if (!(pending&1u)) return handled;
@@ -77,6 +79,7 @@ uint32_t deep_h2c(uint32_t lo,uint32_t hi)
 {
     uint32_t id=lo&255u;
     if (id!=0xf1u && id!=0xf2u) return 0;
+    if (!diag_uses_usb()) return 2;
     ++g_deep.commands;g_deep.last_lo=lo;g_deep.last_hi=hi;
     uint32_t mode=(lo>>8)&255u,cookie=lo>>16;
     if (id==0xf2u) {
@@ -106,6 +109,7 @@ uint32_t deep_h2c(uint32_t lo,uint32_t hi)
 }
 uint32_t deep_pre(void)
 {
+    if (!diag_uses_usb()) return 1;
     if (clock_owned()) {
         /* CPU IE is disabled and only always-on registers are touched while
          * clock ownership is active. The host timer independently requests

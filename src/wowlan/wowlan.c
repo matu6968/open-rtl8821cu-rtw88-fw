@@ -107,6 +107,7 @@ void station_wowlan_init(void) { g_wowlan.state=WOWLAN_IDLE; }
 uint32_t station_wowlan_h2c(uint32_t lo,uint32_t hi)
 {
     if ((lo&255u)!=WOWLAN_H2C) return 0;
+    if (!diag_uses_usb()) return 2;
     ++g_wowlan.commands;g_wowlan.last_lo=lo;g_wowlan.last_hi=hi;
     uint32_t enable=(lo>>8)&255u,cookie=lo>>16;
     if (hi!=WOWLAN_SIGNATURE || enable>1u || !cookie ||

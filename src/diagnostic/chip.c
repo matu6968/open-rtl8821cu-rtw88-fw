@@ -33,12 +33,22 @@ int diag_set_bt_enabled(volatile struct chip_info *info, uint32_t enabled)
 
 void diag_log_chip(const volatile struct chip_info *info)
 {
+    uint32_t status = info->raw_sys_status1;
+    enum diag_hci hci = diag_host_interface(status);
+    if (hci == DIAG_HCI_PCIE) {
+        fw_log(FW_LOG_ALWAYS, "RTL8821C: PCIe strap %bx", diag_hci_strap(status));
+        return;
+    }
+    if (hci == DIAG_HCI_SDIO) {
+        fw_log(FW_LOG_ALWAYS, "RTL8821C: SDIO strap %bx", diag_hci_strap(status));
+        return;
+    }
     /* The eFuse marker describes the board even while Bluetooth is off.
      * A contradictory or missing board observation leaves the variant unknown.
      */
-    if (info->bt_board_flag == 1)
+    if (hci == DIAG_HCI_USB && info->bt_board_flag == 1)
         fw_log(FW_LOG_ALWAYS, "RTL8821CU: Bluetooth not yet supported");
-    else if (info->bt_board_flag == 0 && info->bt_func_flag == 0)
+    else if (hci == DIAG_HCI_USB && info->bt_board_flag == 0 && info->bt_func_flag == 0)
         fw_log(FW_LOG_ALWAYS, "RTL8811CU: Wi-Fi only");
     else
         fw_log(FW_LOG_ALWAYS, "RTL8821C: variant unknown");

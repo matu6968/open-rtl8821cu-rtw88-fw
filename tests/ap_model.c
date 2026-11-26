@@ -21,6 +21,7 @@
 #define STA_SLEEP 0x01210120u
 
 volatile struct doze_status g_doze;
+volatile struct diag_status g_diag;
 static uint8_t mac[0x2000], tx[512];
 static uint32_t role, writes, media_updates, rate_commands, doze_polls, ap_logs;
 
@@ -188,9 +189,16 @@ static void check_pending_station_tx(void)
 
 int main(void)
 {
+    g_diag.chip.raw_sys_status1 = 0x400010c9;
     mac[0x100] = 0xc0;
     broader_init();
     check_ap_dispatch();
     check_pending_station_tx();
+    g_diag.chip.raw_sys_status1 = 0x400020c9;
+    role = 2;
+    uint32_t before = writes;
+    assert(broader_register_h2c(0x01000020, 0x0c00));
+    assert(!broader_register_h2c(STA_SLEEP, 0));
+    assert(writes == before && g_lps.state == LPS_ACTIVE);
     return 0;
 }

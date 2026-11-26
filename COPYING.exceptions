@@ -1,0 +1,9 @@
+As a special exception to the GNU General Public License, version 2, the copyright holders of this firmware grant the following permissions:
+
+This copyright does *not* cover programs that use the services provided by this firmware through its hardware or firmware command interfaces. Such use is considered normal use of the firmware and does *not* by itself fall under the heading of "derived work" for the firmware.
+
+Furthermore, permission is granted to incorporate and distribute unmodified binaries built from source code which has already been made available to the public of this firmware, in whole or in part, as part of other software, including executable files, device drivers, libraries, bootloaders, and software installation packages, regardless of the license under which such software is distributed.
+
+This exception does not extend to modified or derivative versions of the firmware itself. Such versions remain subject to the GNU General Public License, version 2.
+
+All other provisions of the GNU General Public License, version 2, remain in effect.

@@ -32,6 +32,8 @@ class FirmwareLogs(unittest.TestCase):
         ], check=True)
         cls.model = ctypes.CDLL(str(lib))
         cls.model.model_emit.argtypes = [ctypes.c_char_p]
+        cls.model.model_boot.argtypes = [ctypes.c_uint32] * 5
+        cls.model.model_mac.restype = ctypes.c_uint64
 
     def setUp(self):
         self.model.model_reset()
@@ -64,11 +66,29 @@ class FirmwareLogs(unittest.TestCase):
         for board, bt_function, valid, timeout, ready, message in cases:
             with self.subTest(board=board, bt_function=bt_function, valid=valid, timeout=timeout):
                 self.model.model_reset()
-                self.model.model_boot(board, bt_function, valid, timeout)
+                self.model.model_boot(board, bt_function, valid, timeout, 0x400010c9)
                 self.assertEqual(self.model.model_ready(), ready)
                 self.assertEqual(self.model.model_bad_writes(), 0)
                 self.assertEqual(self.drain(), [])
                 self.model.model_iqk(0, 0x00010000)
+                self.model.model_iqk(0, 0)
+                self.assertEqual(self.messages(), [message])
+
+    def test_interface_strap_selects_factory_mac_and_startup_log(self):
+        cases = (
+            (0x400000c9, 0x1776655443302, 'RTL8821C: SDIO strap 00'),
+            (0x400010c9, 0x1665544332202, 'RTL8811CU: Wi-Fi only'),
+            (0x400020c9, 0x1554433221102, 'RTL8821C: PCIe strap 02'),
+            (0x400030c9, 0x1554433221102, 'RTL8821C: PCIe strap 03'),
+            (0xffffffff, 0, 'RTL8821C: variant unknown'),
+        )
+        for status, mac, message in cases:
+            with self.subTest(status=hex(status)):
+                self.model.model_reset()
+                self.model.model_boot(0x01, 0, 1, 0, status)
+                self.assertEqual(self.model.model_ready(), 1)
+                self.assertEqual(self.model.model_bad_writes(), 0)
+                self.assertEqual(self.model.model_mac(), mac)
                 self.model.model_iqk(0, 0)
                 self.assertEqual(self.messages(), [message])
 
